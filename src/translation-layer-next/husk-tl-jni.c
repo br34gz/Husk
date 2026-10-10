@@ -53,6 +53,7 @@ void tl_jni_unref(jobj *o)
      * know about: nothing is freed here (a tracing collector's job). */
     if (tl_dvm) return;
     if (__atomic_sub_fetch(&o->refs, 1, __ATOMIC_ACQ_REL) != 0) return;
+    if (o->destroy) o->destroy(o);
     switch (o->kind) {
     case TL_K_STRING: free(o->str.utf8); free(o->str.u16); break;
     case TL_K_PRIM_ARRAY: free(o->arr.data); break;

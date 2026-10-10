@@ -48,6 +48,7 @@ struct jobj {
     uint32_t nfields;
     void *native;                       /* an implementation's own state */
     void *monitor;
+    void (*destroy)(jobj *);            /* optional HLE-owned references; called before fields are freed */
 };
 
 /* What an implemented Java method receives. */
