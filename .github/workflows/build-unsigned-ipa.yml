@@ -2,6 +2,9 @@ name: Build unsigned IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - fix/sdl-activitythread-application
 
 permissions:
   contents: read
