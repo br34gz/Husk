@@ -135,21 +135,19 @@ static void GA_initHMDs(tl_jcall *c)
 /* com.epicgames.mobile.eossdk.EOSSDK: the statics Epic Online Services' native library calls while it starts */
 #define EOS "com/epicgames/mobile/eossdk/EOSSDK"
 static void EOS_void(tl_jcall *c) { (void)c; }
-static void EOS_context(tl_jcall *c) { c->ret = vl(U.activity ? tl_jni_ref(U.activity) : NULL); }
+extern jobj *tl_hle_application(void);
+static void EOS_application(tl_jcall *c)
+{
+    jobj *application = tl_hle_application();
+    c->ret = vl(application);
+}
+static void EOS_activity(tl_jcall *c) { c->ret = vl(U.activity); }
 static void EOS_osVersion(tl_jcall *c) { c->ret = vl(tl_jni_new_string("14")); }
 static void EOS_market(tl_jcall *c) { c->ret = vl(tl_jni_new_string("US")); }
 static void EOS_nullString(tl_jcall *c) { c->ret.l = NULL; }
 static void EOS_true(tl_jcall *c) { c->ret = vz(1); }
 static void EOS_orientation(tl_jcall *c) { c->ret = vi(1); }
 static void EOS_zeroLong(tl_jcall *c) { c->ret = vj(0); }
-
-/* android.app.ActivityThread, which native code reaches through the hidden API to find the application's Context */
-static void AT_current(tl_jcall *c)
-{
-    static jobj *thread;
-    if (!thread) thread = tl_jni_new_object(tl_jni_class("android/app/ActivityThread"));
-    c->ret = vl(tl_jni_ref(thread));
-}
 
 static void GA_get(tl_jcall *c) { c->ret = vl(U.activity ? tl_jni_ref(U.activity) : NULL); }
 static void GA_packageName(tl_jcall *c) { c->ret = vl(tl_jni_new_string(U.pkg)); }
@@ -189,11 +187,8 @@ static const tl_jhle k_hle[] = {
     M_(CLS, "Get", "()Lcom/epicgames/ue4/GameActivity;", GA_get),
     M_(CLS, "AndroidThunkJava_ForceQuit", "()V", GA_forceQuit),
     M_(CLS, "AndroidThunkJava_InitHMDs", "()V", GA_initHMDs),
-    M_("android/app/ActivityThread", "currentActivityThread", "()Landroid/app/ActivityThread;", AT_current),
-    M_("android/app/ActivityThread", "currentApplication", "()Landroid/app/Application;", EOS_context),
-    M_("android/app/ActivityThread", "getApplication", "()Landroid/app/Application;", EOS_context),
-    M_(EOS, "GetApplicationContext", "()Landroid/content/Context;", EOS_context),
-    M_(EOS, "GetActivity", "()Landroid/app/Activity;", EOS_context),
+    M_(EOS, "GetApplicationContext", "()Landroid/content/Context;", EOS_application),
+    M_(EOS, "GetActivity", "()Landroid/app/Activity;", EOS_activity),
     M_(EOS, "setUserAgent", "(Ljava/lang/String;)V", EOS_void),
     M_(EOS, "GetOSVersion", "()Ljava/lang/String;", EOS_osVersion),
     M_(EOS, "GetSalesMarketIdentifier", "()Ljava/lang/String;", EOS_market),

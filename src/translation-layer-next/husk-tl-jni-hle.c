@@ -32,7 +32,7 @@ static struct {
     float density;
     char version_name[64];
     int version_code;
-    jobj *activity, *resources, *assets, *appinfo, *pm, *display, *metrics, *config, *window, *wm, *looper, *handler;
+    jobj *activity, *application, *activity_thread, *resources, *assets, *appinfo, *pm, *display, *metrics, *config, *window, *wm, *looper, *handler;
 } H;
 
 static jvalue vl(void *p) { jvalue v; v.j = 0; v.l = p; return v; }
@@ -135,7 +135,16 @@ static void Context_getResources(tl_jcall *c) { c->ret = vl(H.resources); }
 static void Context_getAssets(tl_jcall *c) { c->ret = vl(H.assets); }
 static void Context_getApplicationInfo(tl_jcall *c) { c->ret = vl(H.appinfo); }
 static void Context_getPackageManager(tl_jcall *c) { c->ret = vl(H.pm); }
-static void Context_getApplicationContext(tl_jcall *c) { c->ret = vl(H.activity); }
+/*
+ * Android has one process Application.  Keep it separate from the Activity:
+ * SDL and native libraries commonly discover it through ActivityThread and
+ * then use the returned object as a Context.  Returning the Activity (or a
+ * newly allocated non-null object) breaks both object identity and inherited
+ * Context methods.
+ */
+static void Application_get(tl_jcall *c) { c->ret = vl(H.application); }
+static void ActivityThread_current(tl_jcall *c) { c->ret = vl(H.activity_thread); }
+static void Context_getApplicationContext(tl_jcall *c) { Application_get(c); }
 extern jobj *tl_loop_main_looper(void);
 static void Context_getMainLooper(tl_jcall *c) { c->ret = vl(tl_loop_main_looper()); }
 static void Context_getContentResolver(tl_jcall *c) { c->ret = vl(make("android/content/ContentResolver")); }
@@ -527,7 +536,6 @@ static void Reflection_newProxyInstance(tl_jcall *c)
     tl_jni_set_field(p, "style", "I", vi(2));
     c->ret = vl(p);
 }
-static void Activity_getApplication(tl_jcall *c) { static jobj *app; if (!app) app = make("android/app/Application"); c->ret = vl(app); }
 static void Zero_int(tl_jcall *c) { c->ret = vi(0); }
 static void Unity_getNetworkConnectivity(tl_jcall *c) { c->ret = vi(2); }     /* ReachableViaLocalAreaNetwork: the phone has its network */
 
@@ -853,6 +861,7 @@ static const struct { const char *name, *super; } k_classes[] = {
     { "android/os/Environment", "java/lang/Object" }, { "android/os/Process", "java/lang/Object" },
     { "android/content/SharedPreferences", "java/lang/Object" }, { "android/content/Intent", "java/lang/Object" },
     { "bitter/jnibridge/JNIBridge", "java/lang/Object" }, { "java/util/Locale", "java/lang/Object" }, { "android/app/Application", "android/content/Context" },
+    { "android/app/ActivityThread", "java/lang/Object" },
     { "com/unity3d/player/ReflectionHelper", "java/lang/Object" }, { "java/lang/reflect/Member", "java/lang/Object" },
     { "java/lang/reflect/Method", "java/lang/Object" }, { "java/lang/reflect/Constructor", "java/lang/Object" }, { "java/lang/reflect/Field", "java/lang/Object" },
     { "java/lang/StringBuilder", "java/lang/Object" }, { "java/io/InputStream", "java/lang/Object" },
@@ -899,8 +908,11 @@ static const tl_jhle k_hle[] = {
     M("com/sybo/analytics/ChipsetUtils", "GetChipsetName", "()Ljava/lang/String;", Chipset_name),
     M("com/unity/androidnotifications/UnityNotificationManager", "getNotificationManagerImpl", "(Ljava/lang/Object;Lcom/unity/androidnotifications/NotificationCallback;)Ljava/lang/Object;", NotificationManager_get),
     M("com/unity3d/player/ReflectionHelper", "newProxyInstance", "(Lcom/unity3d/player/UnityPlayer;JLjava/lang/Class;)Ljava/lang/Object;", Reflection_newProxyInstance),
-    M("android/app/Activity", "getApplication", "()Landroid/app/Application;", Activity_getApplication),
-    M("android/app/Activity", "getApplication", "()Ljava/lang/Object;", Activity_getApplication),
+    M("android/app/ActivityThread", "currentActivityThread", "()Landroid/app/ActivityThread;", ActivityThread_current),
+    M("android/app/ActivityThread", "currentApplication", "()Landroid/app/Application;", Application_get),
+    M("android/app/ActivityThread", "getApplication", "()Landroid/app/Application;", Application_get),
+    M("android/app/Activity", "getApplication", "()Landroid/app/Application;", Application_get),
+    M("android/app/Activity", "getApplication", "()Ljava/lang/Object;", Application_get),
     M("com/dikra/diskutils/DiskUtils", "availableSpace", "(Z)I", DiskUtils_availableSpace),
     M("com/sybogames/chili/SidekickHelper", "getSidekickExperimentInfo", "()I", Zero_int),
     M("android/util/Log", "getStackTraceString", "(Ljava/lang/Throwable;)Ljava/lang/String;", Log_getStackTraceString),
@@ -1074,6 +1086,7 @@ void tl_hle_configure(const char *pkg, const char *apk, const char *data, int w,
 }
 
 jobj *tl_hle_activity(void) { return H.activity; }
+jobj *tl_hle_application(void) { return H.application; }
 int tl_hle_version_code(void) { return H.version_code; }
 /* An app whose activity is its own class (Minecraft's MainActivity) swaps its instance in for the generic one. */
 void tl_hle_set_activity(jobj *a) { H.activity = a; }
@@ -1095,6 +1108,8 @@ void tl_jni_hle_install(void)
     tl_http_install();
     tl_gms_install();
 
+    H.application = make("android/app/Application");
+    H.activity_thread = make("android/app/ActivityThread");
     H.activity = make("android/app/Activity");
     H.resources = make("android/content/res/Resources");
     H.assets = make("android/content/res/AssetManager");

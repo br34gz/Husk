@@ -1,0 +1,61 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          brew install meson ninja pkg-config xcodegen qemu
+          rustup target add aarch64-apple-ios
+
+          # build_gpu_ios.sh deliberately uses the Apple Silicon Homebrew path.
+          # Keep the documented script unchanged when a hosted Intel runner is
+          # selected by providing the same tool locations there.
+          if [[ "$(uname -m)" == x86_64 ]]; then
+            sudo mkdir -p /opt/homebrew/bin
+            sudo ln -sf "$(command -v meson)" /opt/homebrew/bin/meson
+            sudo ln -sf "$(command -v ninja)" /opt/homebrew/bin/ninja
+          fi
+
+      - name: Run translation-layer tests
+        run: ./tests/translation-layer/run.sh
+
+      - name: Build and package ad-hoc signed IPA
+        run: ./scripts/ci_build.sh build/Husk.ipa
+
+      - name: Verify JIT and sideloading entitlements
+        shell: bash
+        run: |
+          work="$(mktemp -d)"
+          ditto -x -k build/Husk.ipa "$work"
+          app="$work/Payload/Husk.app"
+          codesign -d --entitlements :- "$app" > "$work/entitlements.plist"
+          for entitlement in \
+            get-task-allow \
+            dynamic-codesigning \
+            com.apple.developer.kernel.increased-memory-limit \
+            com.apple.developer.kernel.extended-virtual-addressing; do
+            /usr/libexec/PlistBuddy -c "Print :$entitlement" \
+              "$work/entitlements.plist" >/dev/null
+          done
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-SDL-ActivityThread-fix
+          path: build/Husk.ipa
+          if-no-files-found: error
+          retention-days: 30
