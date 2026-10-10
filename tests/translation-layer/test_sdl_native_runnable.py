@@ -13,6 +13,8 @@ LOOP = (ROOT / "src/translation-layer-next/husk-tl-jni-loop.c").read_text()
 assert '"com/android/support/NativeProxy", "<init>", "(Landroid/content/Context;Landroid/app/Dialog;)V", NativeProxy_init' in SDL
 assert 'tl_jni_native(tl_jni_class_name(run), "run", "()V")' in LOOP
 assert "native_run(tl_jni_env(), run);" in LOOP
+assert '"onAction", "(ILandroid/content/Context;Landroid/app/Dialog;)V", NativeProxy_onAction' in SDL
+assert '"onClick", "(Landroid/view/View;)V", NativeProxy_onClick' in SDL
 
 def function(source, name):
     start = source.index("static void " + name + "(")
@@ -36,6 +38,19 @@ static pthread_once_t native_proxy_once = PTHREAD_ONCE_INIT;
 static int loads, registrations;
 static bool registered;
 static jobj entry_class;
+static jobj *expected_self, *expected_context, *expected_dialog;
+static int actions, clicks, exceptions;
+static bool missing;
+void tl_jni_throw(const char *cls, const char *message) {
+    assert(!strcmp(cls, "java/lang/UnsatisfiedLinkError")); assert(message); ++exceptions;
+}
+static void action(void *env, void *self, int32_t which, void *context, void *dialog) {
+    assert(env == &entry_class && self == expected_self && which == -7);
+    assert(context == expected_context && dialog == expected_dialog); ++actions;
+}
+static void click(void *env, void *self, void *view) {
+    assert(env == &entry_class && self == expected_self && view == expected_context); ++clicks;
+}
 void tl_log_line(const char *fmt, ...) { (void)fmt; }
 bool tl_jni_pending(void) { return false; }
 bool tl_jni_load_library(const char *base) {
@@ -55,6 +70,14 @@ void *tl_jni_native(const char *cls, const char *name, const char *sig) {
         return (void *)stub;
     }
     assert(!strcmp(cls, "com/android/support/NativeProxy"));
+    if (!strcmp(name, "onAction")) {
+        assert(!strcmp(sig, "(ILandroid/content/Context;Landroid/app/Dialog;)V"));
+        return missing ? NULL : (void *)action;
+    }
+    if (!strcmp(name, "onClick")) {
+        assert(!strcmp(sig, "(Landroid/view/View;)V"));
+        return missing ? NULL : (void *)click;
+    }
     assert(!strcmp(name, "run") && !strcmp(sig, "()V"));
     return registered ? (void *)stub : NULL;
 }
@@ -70,6 +93,7 @@ jvalue tl_jni_get_field(jobj *o, const char *name, const char *sig) {
 '''
 harness += function(SDL, "NativeProxy_register") + '\n'
 harness += function(SDL, "NativeProxy_destroy") + '\n' + function(SDL, "NativeProxy_init")
+harness += '\n' + function(SDL, "NativeProxy_onAction") + '\n' + function(SDL, "NativeProxy_onClick")
 harness += r'''
 int main(void) {
     jobj context = {.refs = 1}, dialog = {.refs = 1};
@@ -87,6 +111,16 @@ int main(void) {
     assert(loads == 1 && registrations == 1);
     NativeProxy_register();
     assert(loads == 1 && registrations == 1);
+    expected_self = &proxy; expected_context = &context; expected_dialog = &dialog;
+    jvalue action_args[3] = {{.i = -7}, {.l = &context}, {.l = &dialog}};
+    call.args = action_args;
+    NativeProxy_onAction(&call);
+    call.args = &action_args[1]; NativeProxy_onClick(&call);
+    assert(actions == 1 && clicks == 1 && exceptions == 0);
+    missing = true;
+    call.args = action_args; NativeProxy_onAction(&call);
+    call.args = &action_args[1]; NativeProxy_onClick(&call);
+    assert(actions == 1 && clicks == 1 && exceptions == 2);
     return 0;
 }
 '''

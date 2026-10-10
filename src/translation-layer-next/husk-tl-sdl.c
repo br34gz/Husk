@@ -117,6 +117,29 @@ static void NativeProxy_init(tl_jcall *c)
     tl_jni_set_field(c->self, "dialog", "Landroid/app/Dialog;", vl(tl_jni_ref(c->args[1].l)));
     c->self->destroy = NativeProxy_destroy;
 }
+/* NativeProxy's native run/onClick implementations call back through JNI to
+ * the private native onAction method. HLE invoke() does not dispatch registered
+ * natives automatically, so preserve each exact signature here. */
+static void NativeProxy_onAction(tl_jcall *c)
+{
+    void (*fn)(void *, void *, int32_t, void *, void *) = tl_jni_native(
+        "com/android/support/NativeProxy", "onAction", "(ILandroid/content/Context;Landroid/app/Dialog;)V");
+    if (!fn) {
+        tl_jni_throw("java/lang/UnsatisfiedLinkError", "NativeProxy.onAction is not registered");
+        return;
+    }
+    fn(tl_jni_env(), c->self, c->args[0].i, c->args[1].l, c->args[2].l);
+}
+static void NativeProxy_onClick(tl_jcall *c)
+{
+    void (*fn)(void *, void *, void *) = tl_jni_native(
+        "com/android/support/NativeProxy", "onClick", "(Landroid/view/View;)V");
+    if (!fn) {
+        tl_jni_throw("java/lang/UnsatisfiedLinkError", "NativeProxy.onClick is not registered");
+        return;
+    }
+    fn(tl_jni_env(), c->self, c->args[0].l);
+}
 /* Dungeon Crawl's own addition to SDLActivity: the shorter side of the display in pixels, which it scales its interface by. */
 static void A_refDisplaySize(tl_jcall *c) { c->ret = vi(S.cfg.width < S.cfg.height ? S.cfg.width : S.cfg.height); }
 static void A_zero(tl_jcall *c) { c->ret = vi(0); }
@@ -458,6 +481,8 @@ static const tl_jhle k_hle[] = {
     M_(SDLA, "supportsRelativeMouse", "()Z", A_supportsRelativeMouse),
     M_(SDLA, "setRelativeMouseEnabled", "(Z)Z", A_setRelativeMouseEnabled),
     M_("com/android/support/NativeProxy", "<init>", "(Landroid/content/Context;Landroid/app/Dialog;)V", NativeProxy_init),
+    M_("com/android/support/NativeProxy", "onAction", "(ILandroid/content/Context;Landroid/app/Dialog;)V", NativeProxy_onAction),
+    M_("com/android/support/NativeProxy", "onClick", "(Landroid/view/View;)V", NativeProxy_onClick),
     M_(SDLA, "setWindowStyle", "(Z)V", A_void),
     M_(SDLA, "minimizeWindow", "()V", A_void),
     M_(SDLA, "sendMessage", "(II)Z", A_sendMessage),
