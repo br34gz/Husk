@@ -69,6 +69,17 @@ static void A_showTextInput(tl_jcall *c) { if (getenv("TL_SDL_TRACE")) tl_log_li
 static void A_sendMessage(tl_jcall *c) { if (c->args[0].i == 3 /* COMMAND_TEXTEDIT_HIDE */ && g_kbd) g_kbd(2); c->ret = vz(1); }
 static void A_false(tl_jcall *c) { c->ret = vz(0); }
 static void A_true(tl_jcall *c) { c->ret = vz(1); }
+/* SDL's Android API 24+ motion listener implements relative mode in software:
+ * enabling/disabling it records state and succeeds even without platform
+ * pointer capture. Do the same here. Reporting it as unsupported makes SDL
+ * reject every enable request and some games retry from two threads per frame. */
+static bool s_relative_mouse;
+static void A_supportsRelativeMouse(tl_jcall *c) { c->ret = vz(1); }
+static void A_setRelativeMouseEnabled(tl_jcall *c)
+{
+    s_relative_mouse = c->args[0].z;
+    c->ret = vz(1);
+}
 /* Dungeon Crawl's own addition to SDLActivity: the shorter side of the display in pixels, which it scales its interface by. */
 static void A_refDisplaySize(tl_jcall *c) { c->ret = vi(S.cfg.width < S.cfg.height ? S.cfg.width : S.cfg.height); }
 static void A_zero(tl_jcall *c) { c->ret = vi(0); }
@@ -407,8 +418,8 @@ static const tl_jhle k_hle[] = {
     M_(SDLA, "shouldMinimizeOnFocusLoss", "()Z", A_false),
     M_(SDLA, "isScreenKeyboardShown", "()Z", A_false),
     M_(SDLA, "showTextInput", "(IIIII)Z", A_showTextInput),
-    M_(SDLA, "supportsRelativeMouse", "()Z", A_false),
-    M_(SDLA, "setRelativeMouseEnabled", "(Z)Z", A_false),
+    M_(SDLA, "supportsRelativeMouse", "()Z", A_supportsRelativeMouse),
+    M_(SDLA, "setRelativeMouseEnabled", "(Z)Z", A_setRelativeMouseEnabled),
     M_(SDLA, "setWindowStyle", "(Z)V", A_void),
     M_(SDLA, "minimizeWindow", "()V", A_void),
     M_(SDLA, "sendMessage", "(II)Z", A_sendMessage),
