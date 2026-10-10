@@ -749,6 +749,55 @@ static void AudioManager_getStreamVolume(tl_jcall *c) { c->ret = vi(7); }
 static void AudioManager_getStreamMaxVolume(tl_jcall *c) { c->ret = vi(15); }
 static void AudioManager_requestAudioFocus(tl_jcall *c) { c->ret = vi(1); /* AUDIOFOCUS_REQUEST_GRANTED */ }
 static void Uri_encode(tl_jcall *c) { c->ret = vl(STR(S(c->args[0].l))); }
+/* SDL's headless Java UI keeps toast messages in the log rather than dropping
+ * makeText() and returning null. Own the text independently of JNI locals. */
+static void TextObject_destroy(jobj *o) { free(o->native); }
+static void Toast_setText(tl_jcall *c)
+{
+    jobj *text = c->args[0].l;
+    jobj *rendered = NULL;
+    if (text && !tl_jni_string(text)) {
+        rendered = tl_jni_call(text, "toString", "()Ljava/lang/String;", NULL).l;
+        if (tl_jni_pending()) return;
+        text = rendered;
+    }
+    char *copy = strdup(S(text));
+    tl_jni_unref(rendered);
+    free(c->self->native);
+    c->self->native = copy;
+    c->self->destroy = TextObject_destroy;
+}
+static void Toast_makeText(tl_jcall *c)
+{
+    if (!c->args[0].l) {
+        tl_jni_throw("java/lang/NullPointerException", "Toast requires a Context");
+        return;
+    }
+    jobj *toast = make("android/widget/Toast");
+    tl_jcall text = { .self = toast, .args = &c->args[1] };
+    Toast_setText(&text);
+    if (tl_jni_pending()) { tl_jni_unref(toast); return; }
+    c->ret = vl(toast);
+}
+static void Toast_show(tl_jcall *c)
+{
+    tl_log_line("android: Toast: %s", c->self->native ? (const char *)c->self->native : "");
+}
+static void Uri_parse(tl_jcall *c)
+{
+    if (!c->args[0].l) {
+        tl_jni_throw("java/lang/NullPointerException", "Uri.parse requires a string");
+        return;
+    }
+    jobj *uri = make("android/net/Uri");
+    uri->native = strdup(S(c->args[0].l));
+    uri->destroy = TextObject_destroy;
+    c->ret = vl(uri);
+}
+static void Uri_toString(tl_jcall *c)
+{
+    c->ret = vl(STR(c->self->native ? (const char *)c->self->native : ""));
+}
 static void PAD_init(tl_jcall *c) { c->ret = vl(make("com/unity3d/player/PlayAssetDeliveryUnityWrapper")); }
 static void PAD_playCoreApiMissing(tl_jcall *c) { c->ret = vz(1); }
 /*
@@ -850,6 +899,7 @@ static const struct { const char *name, *super; } k_classes[] = {
     { "android/view/ContextThemeWrapper", "android/content/ContextWrapper" }, { "android/app/Activity", "android/view/ContextThemeWrapper" },
     { "android/view/View", "java/lang/Object" }, { "android/view/ViewGroup", "android/view/View" },
     { "android/widget/FrameLayout", "android/view/ViewGroup" }, { "android/view/Surface", "java/lang/Object" },
+    { "android/widget/Toast", "java/lang/Object" },
     { "android/view/SurfaceView", "android/view/View" }, { "com/unity3d/player/UnityPlayer", "android/widget/FrameLayout" },
     { "android/content/res/Resources", "java/lang/Object" }, { "android/content/res/AssetManager", "java/lang/Object" },
     { "android/content/res/Configuration", "java/lang/Object" }, { "android/util/DisplayMetrics", "java/lang/Object" },
@@ -1050,6 +1100,12 @@ static const tl_jhle k_hle[] = {
     M("android/media/AudioManager", "getStreamVolume", "(I)I", AudioManager_getStreamVolume), M("android/media/AudioManager", "getStreamMaxVolume", "(I)I", AudioManager_getStreamMaxVolume),
     M("android/media/AudioManager", "requestAudioFocus", "(Landroid/media/AudioManager$OnAudioFocusChangeListener;II)I", AudioManager_requestAudioFocus),
     M("android/net/Uri", "encode", "(Ljava/lang/String;)Ljava/lang/String;", Uri_encode),
+    M("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", Uri_parse),
+    M("android/net/Uri", "toString", "()Ljava/lang/String;", Uri_toString),
+    M("android/widget/Toast", "makeText", "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;", Toast_makeText),
+    M("android/widget/Toast", "setText", "(Ljava/lang/CharSequence;)V", Toast_setText),
+    M("android/widget/Toast", "show", "()V", Toast_show),
+    M("android/widget/Toast", "cancel", "()V", Noop),
     M("com/unity3d/player/PlayAssetDeliveryUnityWrapper", "init", "(Landroid/content/Context;)Lcom/unity3d/player/PlayAssetDeliveryUnityWrapper;", PAD_init),
     M("com/unity3d/player/PlayAssetDeliveryUnityWrapper", "playCoreApiMissing", "()Z", PAD_playCoreApiMissing),
     M("com/unity3d/player/UnityCoreAssetPacksStatusCallbacks", "<init>", "()V", Noop),

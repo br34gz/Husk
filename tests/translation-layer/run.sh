@@ -32,6 +32,7 @@ python3 "$HERE/test_sdl_relative_mouse.py"
 
 echo "== SDL APK native Runnable"
 python3 "$HERE/test_sdl_native_runnable.py"
+python3 "$HERE/test_android_notifications.py"
 
 echo "== scanner"
 cc $CFLAGS -fsanitize=address,undefined -o "$OUT/scan_cli" "$HERE/scan_cli.c" \
