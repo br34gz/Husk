@@ -326,6 +326,19 @@ static void run_runnable(jobj *run)
         tl_jni_unref(r);
         return;
     }
+    /* Some engine helper classes implement Runnable.run() as a registered JNI
+     * native rather than DEX bytecode. They are valid app Runnables even when
+     * the full Java interpreter is not active (the SDL path). */
+    typedef void (*native_run_fn)(void *env, void *self);
+    native_run_fn native_run = (native_run_fn)tl_jni_native(tl_jni_class_name(run), "run", "()V");
+    if (native_run) {
+        native_run(tl_jni_env(), run);
+        if (tl_jni_pending()) {
+            tl_log_line("looper: native %s.run() left a pending Java exception", tl_jni_class_name(run));
+            tl_jni_clear();
+        }
+        return;
+    }
     static int warned;
     if (warned++ < 8) tl_log_line("looper: a %s was posted; the app's own Java does not run here", tl_jni_class_name(run));
 }

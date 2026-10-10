@@ -30,6 +30,9 @@ python3 "$HERE/test_jni_application.py"
 echo "== SDL relative mouse"
 python3 "$HERE/test_sdl_relative_mouse.py"
 
+echo "== SDL APK native Runnable"
+python3 "$HERE/test_sdl_native_runnable.py"
+
 echo "== scanner"
 cc $CFLAGS -fsanitize=address,undefined -o "$OUT/scan_cli" "$HERE/scan_cli.c" \
     "$SRC"/husk-tl-json.c "$SRC"/husk-tl-zip.c "$SRC"/husk-tl-elf.c \

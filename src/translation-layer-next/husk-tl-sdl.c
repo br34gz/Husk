@@ -80,6 +80,14 @@ static void A_setRelativeMouseEnabled(tl_jcall *c)
     s_relative_mouse = c->args[0].z;
     c->ret = vz(1);
 }
+/* APKVISION's NativeProxy is Java glue around registered native callbacks. Its
+ * Java constructor only retains the Context and Dialog; the posted native
+ * run() callback consumes those fields later on the Android looper. */
+static void NativeProxy_init(tl_jcall *c)
+{
+    tl_jni_set_field(c->self, "ctx", "Landroid/content/Context;", vl(c->args[0].l));
+    tl_jni_set_field(c->self, "dialog", "Landroid/app/Dialog;", vl(c->args[1].l));
+}
 /* Dungeon Crawl's own addition to SDLActivity: the shorter side of the display in pixels, which it scales its interface by. */
 static void A_refDisplaySize(tl_jcall *c) { c->ret = vi(S.cfg.width < S.cfg.height ? S.cfg.width : S.cfg.height); }
 static void A_zero(tl_jcall *c) { c->ret = vi(0); }
@@ -420,6 +428,7 @@ static const tl_jhle k_hle[] = {
     M_(SDLA, "showTextInput", "(IIIII)Z", A_showTextInput),
     M_(SDLA, "supportsRelativeMouse", "()Z", A_supportsRelativeMouse),
     M_(SDLA, "setRelativeMouseEnabled", "(Z)Z", A_setRelativeMouseEnabled),
+    M_("com/android/support/NativeProxy", "<init>", "(Landroid/content/Context;Landroid/app/Dialog;)V", NativeProxy_init),
     M_(SDLA, "setWindowStyle", "(Z)V", A_void),
     M_(SDLA, "minimizeWindow", "()V", A_void),
     M_(SDLA, "sendMessage", "(II)Z", A_sendMessage),

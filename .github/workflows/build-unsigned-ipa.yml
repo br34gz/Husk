@@ -52,6 +52,7 @@ jobs:
         run: |
           python3 tests/translation-layer/test_jni_application.py
           python3 tests/translation-layer/test_sdl_relative_mouse.py
+          python3 tests/translation-layer/test_sdl_native_runnable.py
 
       - name: Build and package ad-hoc signed IPA
         run: ./scripts/ci_build.sh build/Husk.ipa
