@@ -18,11 +18,21 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Restore compiled dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ios-arm64
+            build/stamps
+            third_party
+          key: husk-ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/sources.sh', 'scripts/build_*.sh', 'patches/*.patch') }}
+
       - name: Install build tools
         shell: bash
         run: |
           brew install meson ninja pkg-config xcodegen qemu
           rustup target add aarch64-apple-ios
+          python3 -m pip install --break-system-packages pyyaml
 
           # build_gpu_ios.sh deliberately uses the Apple Silicon Homebrew path.
           # Keep the documented script unchanged when a hosted Intel runner is
