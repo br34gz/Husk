@@ -199,6 +199,13 @@ const char *tl_path_resolve(const char *path, char *buf, size_t n)
             }
         }
     }
+    /* /data/local/tmp: the world-writable scratch folder (JNA unpacks itself there): a folder of the app's own */
+    if (!strncmp(path, "/data/local/tmp", 15) && (path[15] == 0 || path[15] == '/')) {
+        snprintf(buf, n, "%s/cache/local-tmp", tl_data_dir());
+        mkdir(buf, 0777);
+        snprintf(buf, n, "%s/cache/local-tmp%s", tl_data_dir(), path + 15);
+        return buf;
+    }
     const char *pkg = "/data/data/";
     if (!strncmp(path, pkg, strlen(pkg))) {
         const char *rest = strchr(path + strlen(pkg), '/');
@@ -985,6 +992,16 @@ static void *b_mmap(void *addr, size_t len, int prot, int flags, int fd, long of
             : mmap(addr, len, prot_filter(prot, "mmap"), df, (flags & 0x20) ? -1 : fd, off);
     if (r == MAP_FAILED && (errno == ENOMEM || force_phantom) && prot == 0 && (flags & 0x20) && !(flags & 0x10)) { r = phantom_reserve(len); if (r != MAP_FAILED) errno = 0; }
     TL_ERRNO_END();
+    /* a file mapped executable (libffi's closures: a temporary file mapped twice, once to write and once to run): that view made
+       read+execute for real where the system allows it (never writable and executable at once), else the mapping fails so the
+       library can take another way, rather than seeming to work and faulting on the first call */
+    if (r != MAP_FAILED && (prot & PROT_EXEC) && !(flags & 0x20)) {
+        TL_ERRNO_BEGIN();
+        int pr = mprotect(r, len, (prot & PROT_READ) | PROT_EXEC);
+        TL_ERRNO_END();
+        if (pr == 0) { sys_icache_invalidate(r, len); tl_note_once("a file was mapped executable (libffi closures)"); }
+        else { munmap(r, len); tl_set_guest_errno(13); r = MAP_FAILED; }
+    }
     if (r != MAP_FAILED && (flags & 0x20)) anon_add(r, len);
     mm_trace("mmap", r, len, prot, flags);
     if (r == MAP_FAILED) tl_log_line("mm: mmap FAILED len=%#zx prot=%d flags=%#x errno=%d", len, prot, flags, errno);
@@ -1172,6 +1189,13 @@ typedef struct { void *ss_sp; int ss_flags; int pad; size_t ss_size; } guest_sta
 static int b_sigaltstack(const guest_stack_t *ss, guest_stack_t *old)
 {
     stack_t d, od;
+    /* Android's MINSIGSTKSZ is 5 KB, Darwin's 32 KB: crashpad's smaller stack is kept for the guest to read back, not installed */
+    static __thread guest_stack_t small;
+    if (ss && !(ss->ss_flags & 2) && ss->ss_size < MINSIGSTKSZ) {
+        if (old) { *old = small; if (!old->ss_sp) old->ss_flags = 2; }
+        small = *ss; return 0;
+    }
+    if (!ss && old && small.ss_sp) { *old = small; return 0; }
     if (ss) { d.ss_sp = ss->ss_sp; d.ss_size = ss->ss_size; d.ss_flags = ss->ss_flags & 2 ? SS_DISABLE : 0; }
     TL_ERRNO_BEGIN(); int r = sigaltstack(ss ? &d : NULL, old ? &od : NULL); TL_ERRNO_END();
     if (old && r == 0) { old->ss_sp = od.ss_sp; old->ss_size = od.ss_size; old->ss_flags = od.ss_flags & SS_DISABLE ? 2 : 0; }
@@ -1335,6 +1359,12 @@ static long linux_syscall_impl(long a0, long a1, long a2, long a3, long a4, long
     case 101: { int r = nanosleep((const struct timespec *)a0, (struct timespec *)a1); return r < 0 ? -tl_errno_to_guest(errno) : 0; }
     case 124: sched_yield(); return 0;
     case 132: return 0;                                                                 /* sigaltstack: accepted (guest handlers are not installed) */
+    /* memory and file status by raw system call (packers and protectors avoid libc): through the same shims as the calls */
+    case 222: { void *r = b_mmap((void *)a0, (size_t)a1, (int)a2, (int)a3, (int)a4, a5); return r == (void *)-1 ? -*tl_guest_errno_ptr() : (long)r; }
+    case 215: { int r = b_munmap((void *)a0, (size_t)a1); return r < 0 ? -*tl_guest_errno_ptr() : 0; }
+    case 226: { int r = b_mprotect((void *)a0, (size_t)a1, (int)a2); return r < 0 ? -*tl_guest_errno_ptr() : 0; }
+    case 79:  { int r = b_fstatat((int)a0, (const char *)a1, (guest_stat *)a2, (int)a3); return r < 0 ? -*tl_guest_errno_ptr() : 0; }
+    case 80:  { int r = b_fstat((int)a0, (guest_stat *)a1); return r < 0 ? -*tl_guest_errno_ptr() : 0; }
     default: break;
     }
     char what[96];

@@ -917,6 +917,19 @@ int dvm_capture_frames(void **out, uint32_t *pcs, int max)
 }
 
 static bool dvm_call_inner(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret);
+/* TL_DVM_CALLS: comma-separated cls.method entries (class names with slashes) */
+static bool watch_hit(const char *w, const dvm_method *m)
+{
+    size_t cl = strlen(m->cls->name), ml = strlen(m->name);
+    for (const char *e = w; *e; ) {
+        const char *end = strchr(e, ','); if (!end) end = e + strlen(e);
+        const char *dot = memchr(e, '.', (size_t)(end - e));
+        if (dot && (size_t)(dot - e) == cl && !memcmp(e, m->cls->name, cl) && (size_t)(end - dot - 1) == ml && !memcmp(dot + 1, m->name, ml)) return true;
+        e = *end ? end + 1 : end;
+    }
+    return false;
+}
+
 bool dvm_call(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret)
 {
     if (t_depth < 8192) { t_frames[t_depth] = m; t_pcs[t_depth] = 0; }
@@ -944,11 +957,12 @@ bool dvm_call(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret)
     }
     static const char *watch;
     if (!watch) watch = getenv("TL_DVM_CALLS") ? getenv("TL_DVM_CALLS") : "";
-    if (watch[0] && strchr(watch, '.') && !strcmp(m->name, strchr(watch, '.') + 1) && !strncmp(m->cls->name, watch, (size_t)(strchr(watch, '.') - watch))) {
+    if (watch[0] && watch_hit(watch, m)) {
         { char pb[300]; int po = 0, pn = 0;
           for (const char *q = (m->shorty ? m->shorty : "") + 1; *q && po < 280; q++, pn++) po += snprintf(pb + po, sizeof(pb) - po, " %c:%lld", *q, params ? (long long)params[pn].j : 0);
-          char cb[600]; int co = 0;
-          for (int up = 2; up <= 5 && t_depth - up >= 0 && t_depth - up < 8192 && co < 560; up++) {
+          static int depth; if (!depth) depth = getenv("TL_DVM_CALLS_DEPTH") ? atoi(getenv("TL_DVM_CALLS_DEPTH")) : 4;
+          char cb[4000]; int co = 0;
+          for (int up = 2; up <= depth + 1 && t_depth - up >= 0 && t_depth - up < 8192 && co < 3900; up++) {
               dvm_method *cm = t_frames[t_depth - up];
               co += snprintf(cb + co, sizeof(cb) - co, " <- %s.%s@%u", cm ? cm->cls->name : "?", cm ? cm->name : "?", t_pcs[t_depth - up]);
           }
@@ -1979,6 +1993,8 @@ static jobj *g_app_loader;
 static bool from_app(dvm_class *c)
 {
     if (!c || !c->dex || g_nboot_dex < 0) return false;
+    /* a dex opened at run time (InMemoryDexClassLoader, DexClassLoader): its classes belong to the loader that defines them */
+    if (c->dex->ns != 0) return false;
     for (int i = 0; i < g_nboot_dex; i++) if (g_dex[i] == c->dex) return false;
     return true;
 }
@@ -1991,9 +2007,12 @@ static dvm_field *class_loader_field(void)
 void dvm_mirror_loader(jobj *mirror);
 void dvm_mirror_loader(jobj *mirror)
 {
-    dvm_field *f = g_app_loader ? class_loader_field() : NULL;
+    dvm_class *c = (dvm_class *)mirror->klass.jc->dvm;
+    jobj *rt = c && c->dex && c->dex->ns ? c->dex->loader : NULL;
+    dvm_field *f = g_app_loader || rt ? class_loader_field() : NULL;
     if (!f || !mirror->fields || f->slot >= mirror->nfields || mirror->fields[f->slot].l) return;
-    if (from_app((dvm_class *)mirror->klass.jc->dvm)) mirror->fields[f->slot].l = g_app_loader;
+    if (rt) mirror->fields[f->slot].l = rt;
+    else if (from_app(c)) mirror->fields[f->slot].l = g_app_loader;
 }
 static void loader_for(tl_jclass *jc) { if (jc->mirror && jc->mirror->fields) dvm_mirror_loader(jc->mirror); }
 void dvm_set_app_loader(jobj *loader);
@@ -2018,6 +2037,16 @@ static jobj *dex_cookie(int first, int count)
     c->refs = 1u << 30;
     ((int64_t *)c->arr.data)[0] = first; ((int64_t *)c->arr.data)[1] = count;
     return c;
+}
+
+static void loader_for(tl_jclass *jc);
+/* the class loader a run-time dex was opened for (ART's open natives are given it): its classes answer it from getClassLoader */
+static void note_loader(int first, int count, jobj *loader)
+{
+    if (!loader || loader->kind != TL_K_OBJECT) return;
+    bool fresh = false;
+    for (int i = first; i < first + count; i++) if (g_dex[i]->ns && !g_dex[i]->loader) { g_dex[i]->loader = loader; loader->refs = 1u << 30; fresh = true; }
+    if (fresh) tl_jni_each_declared(loader_for);
 }
 
 static bool DexFile_open(jobj *self, const jvalue *a, jvalue *ret)
@@ -2045,6 +2074,7 @@ static bool DexFile_open(jobj *self, const jvalue *a, jvalue *ret)
     pthread_mutex_unlock(&g_open_lock);
     if (first < 0) return dvm_throw("java/io/IOException", "No original dex files found for dex location %s", path);
     if (g_dvm_trace >= 1) tl_log_line("dvm: DexFile %s: dexes %d..%d", path, first, first + count - 1);
+    note_loader(first, count, a[3].l);       /* openDexFileNative(source, output, flags, loader, elements) */
     ret->l = dex_cookie(first, count);
     return true;
 }
@@ -2082,6 +2112,7 @@ static bool DexFile_openInMemory(jobj *self, const jvalue *a, jvalue *ret)
     g_add_ns = 0;
     pthread_mutex_unlock(&g_open_lock);
     if (!count) return dvm_throw("java/io/IOException", "no dex in memory");
+    note_loader(first, count, a[4].l);
     ret->l = dex_cookie(first, count);
     return true;
 }
@@ -2125,6 +2156,13 @@ static bool DexFile_define(jobj *self, const jvalue *a, jvalue *ret)
     }
     if (!jc) jc = dvm_class_named(name);
     ret->l = jc ? jc->mirror : NULL;
+    /* the first class defined from a run-time dex names the loader all of that dex's classes belong to, also those its own code
+       reached directly (Netflix's: X.class.getClassLoader().getParent()) */
+    if (jc && a[1].l && cookie_range(a[2].l, &first, &count)) {
+        bool fresh = false;
+        for (int i = first; i < first + count; i++) if (g_dex[i]->ns && !g_dex[i]->loader) { g_dex[i]->loader = a[1].l; ((jobj *)a[1].l)->refs = 1u << 30; fresh = true; }
+        if (fresh) tl_jni_each_declared(loader_for);
+    }
     /* the loader that defined it, which Class.getClassLoader answers (loaders that check their classes are their own rely on it) */
     if (jc && a[1].l) {
         static dvm_field *loader_field;
