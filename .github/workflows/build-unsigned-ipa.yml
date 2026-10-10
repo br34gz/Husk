@@ -11,7 +11,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # The checked-in StikJIT XCFramework was built with Swift 6.4.  The
+    # macOS 15 image still defaults to Xcode 16.4/Swift 6.0, which cannot
+    # parse that framework's module interface.
+    runs-on: macos-26
     timeout-minutes: 360
 
     steps:
@@ -25,11 +28,13 @@ jobs:
             build/ios-arm64
             build/stamps
             third_party
-          key: husk-ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/sources.sh', 'scripts/build_*.sh', 'patches/*.patch') }}
+          key: husk-ios-macos26-xcode26-${{ runner.arch }}-${{ hashFiles('scripts/sources.sh', 'scripts/build_*.sh', 'patches/*.patch') }}
 
       - name: Install build tools
         shell: bash
         run: |
+          xcodebuild -version
+          swift --version
           brew install meson ninja pkg-config xcodegen qemu
           rustup target add aarch64-apple-ios
           python3 -m pip install --break-system-packages pyyaml
