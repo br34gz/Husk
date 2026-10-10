@@ -83,6 +83,28 @@ static void A_setRelativeMouseEnabled(tl_jcall *c)
 /* APKVISION's NativeProxy is Java glue around registered native callbacks. Its
  * Java constructor only retains the Context and Dialog; the posted native
  * run() callback consumes those fields later on the Android looper. */
+/* This APK's NativeProxy.<clinit> calls EntryPoint.stub(6), whose own
+ * <clinit> loads libstub. SDL's HLE does not execute those DEX initializers.
+ * Run the original registration code, not a replacement for its callbacks. */
+bool tl_jni_load_library(const char *base);
+static pthread_once_t native_proxy_once = PTHREAD_ONCE_INIT;
+static void NativeProxy_register(void)
+{
+    if (tl_jni_native("com/android/support/NativeProxy", "run", "()V")) return;
+    if (!tl_jni_load_library("libstub.so") || tl_jni_pending()) {
+        tl_log_line("sdl: NativeProxy class initialization: libstub could not initialize");
+        return;
+    }
+    void (*stub)(void *, void *, int32_t) = tl_jni_native("np/dcc/protect/EntryPoint", "stub", "(I)V");
+    if (!stub) {
+        tl_log_line("sdl: NativeProxy class initialization: EntryPoint.stub(I)V is missing");
+        return;
+    }
+    stub(tl_jni_env(), tl_jni_class_object("np/dcc/protect/EntryPoint"), 6);
+    tl_log_line("sdl: NativeProxy class initialization: run registered=%d, exception=%d",
+                tl_jni_native("com/android/support/NativeProxy", "run", "()V") != NULL,
+                tl_jni_pending());
+}
 static void NativeProxy_destroy(jobj *self)
 {
     tl_jni_unref(tl_jni_get_field(self, "ctx", "Landroid/content/Context;").l);
@@ -90,6 +112,7 @@ static void NativeProxy_destroy(jobj *self)
 }
 static void NativeProxy_init(tl_jcall *c)
 {
+    pthread_once(&native_proxy_once, NativeProxy_register);
     tl_jni_set_field(c->self, "ctx", "Landroid/content/Context;", vl(tl_jni_ref(c->args[0].l)));
     tl_jni_set_field(c->self, "dialog", "Landroid/app/Dialog;", vl(tl_jni_ref(c->args[1].l)));
     c->self->destroy = NativeProxy_destroy;
